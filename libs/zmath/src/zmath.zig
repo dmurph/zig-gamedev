@@ -263,6 +263,7 @@
 // ==============================================================================
 
 // Fundamental types
+pub const F32x2 = @Vector(2, f32);
 pub const F32x4 = @Vector(4, f32);
 pub const F32x8 = @Vector(8, f32);
 pub const F32x16 = @Vector(16, f32);
@@ -274,6 +275,9 @@ pub const Boolx16 = @Vector(16, bool);
 pub const Vec = F32x4;
 pub const Mat = [4]F32x4;
 pub const Quat = F32x4;
+
+pub const Vec2 = F32x2;
+pub const Mat2 = [2]F32x2;
 
 const builtin = @import("builtin");
 const std = @import("std");
@@ -290,6 +294,9 @@ const has_fma = if (cpu_arch == .x86_64) std.Target.x86.featureSetHas(builtin.cp
 // 1. Initialization functions
 //
 // ------------------------------------------------------------------------------
+pub inline fn f32x2(e0: f32, e1: f32) F32x2 {
+    return .{ e0, e1 };
+}
 pub inline fn f32x4(e0: f32, e1: f32, e2: f32, e3: f32) F32x4 {
     return .{ e0, e1, e2, e3 };
 }
@@ -1961,6 +1968,18 @@ test "zmath.dot2" {
     try expectVecApproxEqAbs(v, splat(F32x4, 6.0), 0.0001);
 }
 
+pub inline fn dot2Vec2(v0: Vec2, v1: Vec2) F32x2 {
+    const xmm0 = v0 * v1; // | x0*x1 | y0*y1 |
+    return @splat(xmm0[0] + xmm0[1]);
+}
+
+test "zmath.dot2Vec2" {
+    const v0 = f32x2(-1.0, 2.0);
+    const v1 = f32x2(4.0, 5.0);
+    const v = dot2Vec2(v0, v1);
+    try expectVecApproxEqAbs(v, splat(F32x2, 6.0), 0.0001);
+}
+
 pub inline fn dot3(v0: Vec, v1: Vec) F32x4 {
     const dot = v0 * v1;
     return f32x4s(dot[0] + dot[1] + dot[2]);
@@ -2111,6 +2130,28 @@ test "zmath.vecMulMat" {
     try expectVecApproxEqAbs(mv, f32x4(1.0, 2.0, 3.0, 21.0), 0.0001);
     try expectVecApproxEqAbs(v, f32x4(3.0, 5.0, 7.0, 1.0), 0.0001);
 }
+
+fn vec2MulMat2(v: Vec2, m: Mat2) Vec2 {
+    const vx = @shuffle(f32, v, undefined, [2]i32{ 0, 0 });
+    const vy = @shuffle(f32, v, undefined, [2]i32{ 1, 1 });
+    return vx * m[0] + vy * m[1];
+}
+fn mat2MulVec2(m: Mat2, v: Vec2) Vec2 {
+    return .{ dot2Vec2(m[0], v)[0], dot2Vec2(m[1], v)[0] };
+}
+test "zmath.vec2MulMat2" {
+    const m = Mat2{
+        f32x2(1.0, 4.0),
+        f32x2(2.0, 3.0),
+    };
+    const vm = mul(f32x2(1.0, 2.0), m);
+    const mv = mul(m, f32x2(1.0, 2.0));
+    const v = mul(transposeMat2(m), f32x2(1.0, 2.0));
+    try expectVecApproxEqAbs(vm, f32x2(5.0, 10.0), 0.0001);
+    try expectVecApproxEqAbs(mv, f32x2(9.0, 8.0), 0.0001);
+    try expectVecApproxEqAbs(v, f32x2(5.0, 10.0), 0.0001);
+}
+
 // ------------------------------------------------------------------------------
 //
 // 4. Matrix functions
@@ -2144,6 +2185,12 @@ fn mulRetType(comptime Ta: type, comptime Tb: type) type {
         return Mat;
     } else if ((Ta == Vec and Tb == Mat) or (Ta == Mat and Tb == Vec)) {
         return Vec;
+    } else if ((Ta == Mat2) and (Tb == Mat2)) {
+        return Mat2;
+    } else if ((Ta == f32 and Tb == Mat2) or (Ta == Mat2 and Tb == f32)) {
+        return Mat2;
+    } else if ((Ta == Vec2 and Tb == Mat2) or (Ta == Mat2 and Tb == Vec2)) {
+        return Vec2;
     }
     @compileError("zmath.mul() not implemented for types: " ++ @typeName(Ta) ++ @typeName(Tb));
 }
@@ -2159,10 +2206,22 @@ pub fn mul(a: anytype, b: anytype) mulRetType(@TypeOf(a), @TypeOf(b)) {
     } else if (Ta == Mat and Tb == f32) {
         const vb = splat(F32x4, b);
         return Mat{ a[0] * vb, a[1] * vb, a[2] * vb, a[3] * vb };
+    } else if (Ta == f32 and Tb == Mat2) {
+        const va = splat(F32x2, a);
+        return Mat2{ va * b[0], va * b[1] };
+    } else if (Ta == Mat2 and Tb == f32) {
+        const vb = splat(F32x2, b);
+        return Mat2{ a[0] * vb, a[1] * vb };
     } else if (Ta == Vec and Tb == Mat) {
         return vecMulMat(a, b);
     } else if (Ta == Mat and Tb == Vec) {
         return matMulVec(a, b);
+    } else if (Ta == Mat2 and Tb == Mat2) {
+        return mulMat2(a, b);
+    } else if (Ta == Mat2 and Tb == Vec2) {
+        return mat2MulVec2(a, b);
+    } else if (Ta == Vec2 and Tb == Mat2) {
+        return vec2MulMat2(a, b);
     } else {
         @compileError("zmath.mul() not implemented for types: " ++ @typeName(Ta) ++ ", " ++ @typeName(Tb));
     }
@@ -2215,6 +2274,30 @@ test "zmath.matrix.mul" {
     try expectVecApproxEqAbs(c[3], f32x4(13.54, 14.12, 14.7, 15.28), 0.0001);
 }
 
+fn mulMat2(m0: Mat2, m1: Mat2) Mat2 {
+    var result: Mat2 = undefined;
+    comptime var row: u32 = 0;
+    inline while (row < 2) : (row += 1) {
+        const vx = @shuffle(f32, m0[row], undefined, [2]i32{ 0, 0 });
+        const vy = @shuffle(f32, m0[row], undefined, [2]i32{ 1, 1 });
+        result[row] = mulAdd(vx, m1[0], vy * m1[1]);
+    }
+    return result;
+}
+test "zmath.matrix.mulMat2" {
+    const a = Mat2{
+        f32x2(0.1, 0.2),
+        f32x2(0.3, 0.4),
+    };
+    const b = Mat2{
+        f32x2(0.5, 0.6),
+        f32x2(0.7, 0.8),
+    };
+    const c = mul(a, b);
+    try expectVecApproxEqAbs(c[0], f32x2(0.19, 0.22), 0.0001);
+    try expectVecApproxEqAbs(c[1], f32x2(0.43, 0.5), 0.0001);
+}
+
 pub fn transpose(m: Mat) Mat {
     const temp1 = @shuffle(f32, m[0], m[1], [4]i32{ 0, 1, ~@as(i32, 0), ~@as(i32, 1) });
     const temp3 = @shuffle(f32, m[0], m[1], [4]i32{ 2, 3, ~@as(i32, 2), ~@as(i32, 3) });
@@ -2239,6 +2322,23 @@ test "zmath.matrix.transpose" {
     try expectVecApproxEqAbs(mt[1], f32x4(2.0, 6.0, 10.0, 14.0), 0.0001);
     try expectVecApproxEqAbs(mt[2], f32x4(3.0, 7.0, 11.0, 15.0), 0.0001);
     try expectVecApproxEqAbs(mt[3], f32x4(4.0, 8.0, 12.0, 16.0), 0.0001);
+}
+
+pub fn transposeMat2(m: Mat2) Mat2 {
+    return .{
+        @shuffle(f32, m[0], m[1], [2]i32{ 0, ~@as(i32, 0) }),
+        @shuffle(f32, m[0], m[1], [2]i32{ 1, ~@as(i32, 1) }),
+    };
+}
+
+test "zmath.matrix.transposeMat2" {
+    const m = Mat2{
+        f32x2(1.0, 2.0),
+        f32x2(3.0, 4.0),
+    };
+    const mt = transposeMat2(m);
+    try expectVecApproxEqAbs(mt[0], f32x2(1.0, 3.0), 0.0001);
+    try expectVecApproxEqAbs(mt[1], f32x2(2.0, 4.0), 0.0001);
 }
 
 pub fn rotationX(angle: f32) Mat {
@@ -2555,6 +2655,7 @@ pub fn inverse(a: anytype) @TypeOf(a) {
     const T = @TypeOf(a);
     return switch (T) {
         Mat => inverseMat(a),
+        Mat2 => inverseMat2(a),
         Quat => inverseQuat(a),
         else => @compileError("zmath.inverse() not implemented for " ++ @typeName(T)),
     };
@@ -2681,6 +2782,50 @@ test "zmath.matrix.inverse" {
     try expectVecApproxEqAbs(mi[1], f32x4(-0.163661, -0.14801, -0.253147, 0.141204), 0.0001);
     try expectVecApproxEqAbs(mi[2], f32x4(-0.0871045, 0.00646478, -0.0785982, 0.0398095), 0.0001);
     try expectVecApproxEqAbs(mi[3], f32x4(0.18986, 0.103096, 0.272882, 0.10854), 0.0001);
+}
+
+fn inverseMat2(m: Mat2) Mat2 {
+    return inverseDetMat2(m, null);
+}
+
+pub fn inverseDetMat2(m: Mat2, out_det: ?*F32x2) Mat2 {
+    var temp = @shuffle(f32, m[1], undefined, [2]i32{ 1, 0 }); // | d | c |
+    temp = m[0] * temp; // | a*d | b*c|
+    const det: F32x2 = @splat(temp[0] - temp[1]);
+    if (out_det != null) {
+        out_det.?.* = det;
+    }
+    if (math.approxEqAbs(f32, det[0], 0.0, math.floatEps(f32))) {
+        return .{
+            f32x2(0.0, 0.0),
+            f32x2(0.0, 0.0),
+        };
+    }
+    var mr = Mat2{
+        f32x2(m[1][1], -m[0][1]),
+        f32x2(-m[1][0], m[0][0]),
+    };
+
+    const scale = splat(F32x2, 1.0) / det;
+    mr[0] *= scale;
+    mr[1] *= scale;
+    return mr;
+}
+
+test "zmath.matrix.inverseMat2" {
+    const m = Mat2{
+        f32x2(10.0, -9.0),
+        f32x2(7.0, -12.0),
+    };
+    var det: F32x2 = undefined;
+    const mi = inverseDetMat2(m, &det);
+    try expectVecApproxEqAbs(det, splat(F32x2, -57), 0.0001);
+    try expectVecApproxEqAbs(mi[0], f32x2(0.21052632, -0.15789473), 0.0001);
+    try expectVecApproxEqAbs(mi[1], f32x2(0.12280702, -0.1754386), 0.0001);
+
+    const id = mul(m, mi);
+    try expectVecApproxEqAbs(id[0], f32x2(1, 0), 0.0001);
+    try expectVecApproxEqAbs(id[1], f32x2(0, 1), 0.0001);
 }
 
 pub fn matFromNormAxisAngle(axis: Vec, angle: f32) Mat {
@@ -2841,6 +2986,19 @@ test "zmath.loadMat" {
     try expectVecEqual(m[3], f32x4(14.0, 15.0, 16.0, 17.0));
 }
 
+pub inline fn loadMat2(mem: []const f32) Mat2 {
+    return .{
+        load(mem[0..2], F32x2, 2),
+        load(mem[2..4], F32x2, 2),
+    };
+}
+
+test "zmath.loadMat2" {
+    const a = [_]f32{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const m = loadMat2(a[1..]);
+    try expectVecEqual(m[0], f32x2(2.0, 3.0));
+    try expectVecEqual(m[1], f32x2(4.0, 5.0));
+}
 pub inline fn storeMat(mem: []f32, m: Mat) void {
     store(mem[0..4], m[0], 0);
     store(mem[4..8], m[1], 0);
