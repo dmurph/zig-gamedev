@@ -335,6 +335,10 @@ pub inline fn boolx16(
 }
 // zig fmt: on
 
+pub inline fn vec2(x: f32, y: f32) Vec2 {
+    return .{ x, y };
+}
+
 pub inline fn veclen(comptime T: type) comptime_int {
     return @typeInfo(T).Vector.len;
 }
