@@ -2020,6 +2020,7 @@ pub inline fn dot4(v0: Vec, v1: Vec) F32x4 {
     xmm1 = xmm0 + xmm1; // | x0*x1 + y0*y1 | x0*x1 + y0*y1 | z0*z1 + w0*w1 | z0*z1 + w0*w1 |
     xmm0 = @shuffle(f32, xmm1, undefined, [4]i32{ 3, 2, 1, 0 }); // | z0*z1 + w0*w1 | z0*z1 + w0*w1 | x0*x1 + y0*y1 | x0*x1 + y0*y1 |
     xmm0 = xmm0 + xmm1;
+    return xmm0;
 }
 test "zmath.dot4" {
     const v0 = f32x4(-1.0, 2.0, 3.0, -2.0);

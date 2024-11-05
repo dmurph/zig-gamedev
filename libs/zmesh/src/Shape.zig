@@ -174,6 +174,9 @@ fn initShape(handle: ShapeHandle) Shape {
             )[0..@as(usize, @intCast(parmesh.npoints))],
     };
 }
+pub fn initEmpty() Shape {
+    return initShape(par_shapes_create_empty());
+}
 
 pub fn initCylinder(slices: i32, stacks: i32) Shape {
     return initShape(par_shapes_create_cylinder(slices, stacks));
@@ -325,6 +328,29 @@ extern fn par_shapes_create_parametric(
     userdata: ?*anyopaque,
 ) ShapeHandle;
 extern fn par_shapes_create_empty() ShapeHandle;
+
+pub fn format(
+    shape: Shape,
+    comptime _: []const u8,
+    _: std.fmt.FormatOptions,
+    writer: anytype,
+) !void {
+    try writer.writeAll("Shape{\n");
+    _ = try writer.print("\tindices: {d},\n", .{shape.indices});
+    _ = try writer.print("\tpositions: {d},\n", .{shape.positions});
+    if (shape.normals != null) {
+        _ = try writer.print("\tnormals: {d},\n", .{shape.normals.?});
+    } else {
+        _ = try writer.print("\tnormals: <none>,\n", .{});
+    }
+    if (shape.texcoords != null) {
+        _ = try writer.print("\ttexcoords: {d},\n", .{shape.texcoords.?});
+    } else {
+        _ = try writer.print("\ttexcoords: <none>", .{});
+    }
+    _ = try writer.print("\thandle: {*},\n", .{shape.handle});
+    try writer.writeAll("}\n");
+}
 
 const zmesh = @import("main.zig");
 const save = false;
