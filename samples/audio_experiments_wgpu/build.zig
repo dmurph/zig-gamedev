@@ -13,8 +13,6 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .optimize = options.optimize,
     });
 
-    @import("system_sdk").addLibraryPathsTo(exe);
-
     const zglfw = b.dependency("zglfw", .{
         .target = options.target,
     });
@@ -57,6 +55,13 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .install_subdir = b.pathJoin(&.{ "bin", content_dir }),
     });
     exe.step.dependOn(&install_content_step.step);
+
+    if (options.target.result.os.tag == .macos) {
+        if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+            exe.addLibraryPath(system_sdk.path("macos12/usr/lib"));
+            exe.addSystemFrameworkPath(system_sdk.path("macos12/System/Library/Frameworks"));
+        }
+    }
 
     return exe;
 }

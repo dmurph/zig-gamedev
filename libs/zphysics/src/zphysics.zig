@@ -78,6 +78,19 @@ pub const VTableHeader = switch (@import("builtin").abi) {
     },
 };
 
+pub fn RefTargetHeader(comptime first_field_align: u29) type {
+    return switch (@import("builtin").abi) {
+        .msvc => extern struct {
+            __vtable_ptr: ?*const anyopaque = null,
+            __ref_count: u32 align(first_field_align) = 0,
+        },
+        else => extern struct {
+            __vtable_ptr: ?*const anyopaque = null,
+            __ref_count: u32 = 0,
+        },
+    };
+}
+
 pub const BroadPhaseLayerInterface = extern struct {
     __v: *const VTable,
 
@@ -344,6 +357,19 @@ pub const CharacterContactListener = extern struct {
                     sub_shape_id,
                 );
             }
+            pub inline fn OnCharacterContactValidate(
+                self: *const T,
+                character: *const CharacterVirtual,
+                other_character: *const CharacterVirtual,
+                sub_shape_id: *const SubShapeId,
+            ) bool {
+                return @as(*const CharacterContactListener.VTable, @ptrCast(self.__v)).OnCharacterContactValidate(
+                    @as(*CharacterContactListener, @ptrCast(self)),
+                    character,
+                    other_character,
+                    sub_shape_id,
+                );
+            }
             pub inline fn OnContactAdded(
                 self: *const T,
                 character: *const CharacterVirtual,
@@ -357,6 +383,25 @@ pub const CharacterContactListener = extern struct {
                     @as(*CharacterContactListener, @ptrCast(self)),
                     character,
                     body,
+                    sub_shape_id,
+                    contact_position,
+                    contact_normal,
+                    io_settings,
+                );
+            }
+            pub inline fn OnCharacterContactAdded(
+                self: *const T,
+                character: *const CharacterVirtual,
+                other_character: *const CharacterVirtual,
+                sub_shape_id: *const SubShapeId,
+                contact_position: *const [3]Real,
+                contact_normal: *const [3]f32,
+                io_settings: *CharacterContactSettings,
+            ) void {
+                return @as(*const CharacterContactListener.VTable, @ptrCast(self.__v)).OnCharacterContactAdded(
+                    @as(*CharacterContactListener, @ptrCast(self)),
+                    character,
+                    other_character,
                     sub_shape_id,
                     contact_position,
                     contact_normal,
@@ -388,6 +433,31 @@ pub const CharacterContactListener = extern struct {
                     character_velocity_out,
                 );
             }
+            pub inline fn OnCharacterContactSolve(
+                self: *const T,
+                character: *const CharacterVirtual,
+                other_character: *const CharacterVirtual,
+                sub_shape_id: *const SubShapeId,
+                contact_position: *const [3]Real,
+                contact_normal: *const [3]f32,
+                contact_velocity: *const [3]f32,
+                contact_material: *const Material,
+                character_velocity: *const [3]f32,
+                character_velocity_out: *[3]f32,
+            ) void {
+                return @as(*const CharacterContactListener.VTable, @ptrCast(self.__v)).OnCharacterContactSolve(
+                    @as(*CharacterContactListener, @ptrCast(self)),
+                    character,
+                    other_character,
+                    sub_shape_id,
+                    contact_position,
+                    contact_normal,
+                    contact_velocity,
+                    contact_material,
+                    character_velocity,
+                    character_velocity_out,
+                );
+            }
         };
     }
 
@@ -406,6 +476,12 @@ pub const CharacterContactListener = extern struct {
             body: *const Body,
             sub_shape_id: *const SubShapeId,
         ) callconv(.C) bool,
+        OnCharacterContactValidate: *const fn (
+            self: *CharacterContactListener,
+            character: *const CharacterVirtual,
+            other_character: *const CharacterVirtual,
+            sub_shape_id: *const SubShapeId,
+        ) callconv(.C) bool,
         OnContactAdded: *const fn (
             self: *CharacterContactListener,
             character: *const CharacterVirtual,
@@ -415,10 +491,31 @@ pub const CharacterContactListener = extern struct {
             contact_normal: *const [3]f32,
             io_settings: *CharacterContactSettings,
         ) callconv(.C) void,
+        OnCharacterContactAdded: *const fn (
+            self: *CharacterContactListener,
+            character: *const CharacterVirtual,
+            other_character: *const CharacterVirtual,
+            sub_shape_id: *const SubShapeId,
+            contact_position: *const [3]Real,
+            contact_normal: *const [3]f32,
+            io_settings: *CharacterContactSettings,
+        ) callconv(.C) void,
         OnContactSolve: *const fn (
             self: *CharacterContactListener,
             character: *const CharacterVirtual,
             body: *const Body,
+            sub_shape_id: *const SubShapeId,
+            contact_position: *const [3]Real,
+            contact_normal: *const [3]f32,
+            contact_velocity: *const [3]f32,
+            contact_material: *const Material,
+            character_velocity: *const [3]f32,
+            character_velocity_out: *[3]f32,
+        ) callconv(.C) void,
+        OnCharacterContactSolve: *const fn (
+            self: *CharacterContactListener,
+            character: *const CharacterVirtual,
+            other_character: *const CharacterVirtual,
             sub_shape_id: *const SubShapeId,
             contact_position: *const [3]Real,
             contact_normal: *const [3]f32,
@@ -627,13 +724,26 @@ pub const ShapeFilter = extern struct {
 pub const ContactSettings = extern struct {
     combined_friction: f32,
     combined_restitution: f32,
+
+    inv_mass_scale_1: f32,
+    inv_inertia_scale_1: f32,
+    inv_mass_scale_2: f32,
+    inv_inertia_scale_2: f32,
+
     is_sensor: bool,
+
+    relative_linear_surface_velocity: [4]f32 align(16), // 4th element is ignored
+    relative_angular_surface_velocity: [4]f32 align(16), // 4th element is ignored
 
     comptime {
         assert(@sizeOf(ContactSettings) == @sizeOf(c.JPC_ContactSettings));
         assert(@offsetOf(ContactSettings, "combined_restitution") == @offsetOf(
             c.JPC_ContactSettings,
             "combined_restitution",
+        ));
+        assert(@offsetOf(ContactSettings, "relative_angular_surface_velocity") == @offsetOf(
+            c.JPC_ContactSettings,
+            "relative_angular_surface_velocity",
         ));
     }
 };
@@ -661,6 +771,16 @@ pub const SubShapeIdPair = extern struct {
     comptime {
         assert(@sizeOf(SubShapeIdPair) == @sizeOf(c.JPC_SubShapeIDPair));
         assert(@offsetOf(SubShapeIdPair, "second") == @offsetOf(c.JPC_SubShapeIDPair, "second"));
+    }
+};
+
+pub const SubShapeIDCreator = extern struct {
+    id: SubShapeId = sub_shape_id_empty,
+    current_bit: u32 = 0,
+
+    comptime {
+        assert(@sizeOf(SubShapeIDCreator) == @sizeOf(c.JPC_SubShapeIDCreator));
+        assert(@offsetOf(SubShapeIDCreator, "current_bit") == @offsetOf(c.JPC_SubShapeIDCreator, "current_bit"));
     }
 };
 
@@ -748,6 +868,18 @@ pub const MotionQuality = enum(c.JPC_MotionQuality) {
     linear_cast = c.JPC_MOTION_QUALITY_LINEAR_CAST,
 };
 
+/// NOTE: Enum values designed for bitwise combinations in the C tradition
+pub const AllowedDOFs = enum(c.JPC_AllowedDOFs) {
+    none = c.JPC_ALLOWED_DOFS_NONE, // 0b000000
+    all = c.JPC_ALLOWED_DOFS_ALL, // 0b111111
+    translation_x = c.JPC_ALLOWED_DOFS_TRANSLATION_X, // 0b000001
+    translation_y = c.JPC_ALLOWED_DOFS_TRANSLATION_Y, // 0b000010
+    translation_z = c.JPC_ALLOWED_DOFS_TRANSLATION_Z, // 0b000100
+    rotation_x = c.JPC_ALLOWED_DOFS_ROTATION_X, // 0b001000
+    rotation_y = c.JPC_ALLOWED_DOFS_ROTATION_Y, // 0b010000
+    rotation_z = c.JPC_ALLOWED_DOFS_ROTATION_Z, // 0b100000
+};
+
 pub const OverrideMassProperties = enum(c.JPC_OverrideMassProperties) {
     calc_mass_inertia = c.JPC_OVERRIDE_MASS_PROPS_CALC_MASS_INERTIA,
     calc_inertia = c.JPC_OVERRIDE_MASS_PROPS_CALC_INERTIA,
@@ -770,10 +902,14 @@ pub const BodyCreationSettings = extern struct {
     object_layer: ObjectLayer = 0,
     collision_group: CollisionGroup = .{},
     motion_type: MotionType = .dynamic,
+    allowed_DOFs: AllowedDOFs = .all,
     allow_dynamic_or_kinematic: bool = false,
     is_sensor: bool = false,
+    collide_kinematic_vs_non_dynamic: bool = false,
     use_manifold_reduction: bool = true,
+    apply_gyroscopic_force: bool = false,
     motion_quality: MotionQuality = .discrete,
+    enhanced_internal_edge_removal: bool = false,
     allow_sleeping: bool = true,
     friction: f32 = 0.2,
     restitution: f32 = 0.0,
@@ -782,6 +918,8 @@ pub const BodyCreationSettings = extern struct {
     max_linear_velocity: f32 = 500.0,
     max_angular_velocity: f32 = 0.25 * c.JPC_PI * 60.0,
     gravity_factor: f32 = 1.0,
+    num_velocity_steps_override: u32 = 0,
+    num_position_steps_override: u32 = 0,
     override_mass_properties: OverrideMassProperties = .calc_mass_inertia,
     inertia_multiplier: f32 = 1.0,
     mass_properties_override: MassProperties = .{},
@@ -795,6 +933,8 @@ pub const BodyCreationSettings = extern struct {
         assert(@offsetOf(BodyCreationSettings, "user_data") == @offsetOf(c.JPC_BodyCreationSettings, "user_data"));
         assert(@offsetOf(BodyCreationSettings, "motion_quality") ==
             @offsetOf(c.JPC_BodyCreationSettings, "motion_quality"));
+        assert(@offsetOf(BodyCreationSettings, "shape") ==
+            @offsetOf(c.JPC_BodyCreationSettings, "shape"));
     }
 };
 
@@ -804,10 +944,11 @@ pub const CharacterContactSettings = extern struct {
 };
 
 pub const CharacterBaseSettings = extern struct {
-    __header: VTableHeader = .{},
+    __header: RefTargetHeader(16),
     up: [4]f32 align(16), // 4th element is ignored
     supporting_volume: [4]f32 align(16), // JPH::Plane - 4th element is used
     max_slope_angle: f32,
+    enhanced_internal_edge_removal: bool,
     shape: *Shape, // must provide valid shape (such as the typical capsule)
 
     comptime {
@@ -868,6 +1009,8 @@ pub const CharacterVirtualSettings = extern struct {
     max_num_hits: u32,
     hit_reduction_cos_max_angle: f32,
     penetration_recovery_speed: f32,
+    inner_body_shape: ?*Shape,
+    inner_body_layer: ObjectLayer,
 
     comptime {
         assert(@sizeOf(CharacterVirtualSettings) == @sizeOf(c.JPC_CharacterVirtualSettings));
@@ -875,8 +1018,27 @@ pub const CharacterVirtualSettings = extern struct {
         assert(@offsetOf(CharacterVirtualSettings, "mass") == @offsetOf(c.JPC_CharacterVirtualSettings, "mass"));
         assert(@offsetOf(CharacterVirtualSettings, "max_num_hits") ==
             @offsetOf(c.JPC_CharacterVirtualSettings, "max_num_hits"));
-        assert(@offsetOf(CharacterVirtualSettings, "penetration_recovery_speed") ==
-            @offsetOf(c.JPC_CharacterVirtualSettings, "penetration_recovery_speed"));
+        assert(@offsetOf(CharacterVirtualSettings, "inner_body_layer") ==
+            @offsetOf(c.JPC_CharacterVirtualSettings, "inner_body_layer"));
+    }
+};
+
+pub const RayCast = extern struct {
+    origin: [4]f32 align(16), // 4th element is ignored
+    direction: [4]f32 align(16), // 4th element is ignored
+
+    pub fn getPointOnRay(self: RayCast, fraction: f32) [3]f32 {
+        return .{
+            self.origin[0] + self.direction[0] * fraction,
+            self.origin[1] + self.direction[1] * fraction,
+            self.origin[2] + self.direction[2] * fraction,
+        };
+    }
+
+    comptime {
+        assert(@sizeOf(RayCast) == @sizeOf(c.JPC_RayCast));
+        assert(@offsetOf(RayCast, "origin") == @offsetOf(c.JPC_RayCast, "origin"));
+        assert(@offsetOf(RayCast, "direction") == @offsetOf(c.JPC_RayCast, "direction"));
     }
 };
 
@@ -884,7 +1046,7 @@ pub const RRayCast = extern struct {
     origin: [4]Real align(rvec_align), // 4th element is ignored
     direction: [4]f32 align(16), // 4th element is ignored
 
-    pub fn getPointOnRay(self: RRayCast, fraction: Real) [3]Real {
+    pub fn getPointOnRay(self: RRayCast, fraction: f32) [3]Real {
         return .{
             self.origin[0] + self.direction[0] * fraction,
             self.origin[1] + self.direction[1] * fraction,
@@ -917,6 +1079,11 @@ pub const BackFaceMode = enum(c.JPC_BackFaceMode) {
     collide_with_back_faces = c.JPC_BACK_FACE_COLLIDE,
 };
 
+pub const BodyType = enum(c.JPC_BodyType) {
+    rigid_body = c.JPC_BODY_TYPE_RIGID_BODY,
+    soft_body = c.JPC_BODY_TYPE_SOFT_BODY,
+};
+
 pub const RayCastSettings = extern struct {
     back_face_mode: BackFaceMode,
     treat_convex_as_solid: bool,
@@ -928,6 +1095,30 @@ pub const RayCastSettings = extern struct {
         );
         assert(@offsetOf(RayCastSettings, "treat_convex_as_solid") ==
             @offsetOf(c.JPC_RayCastSettings, "treat_convex_as_solid"));
+    }
+};
+
+pub const AABox = extern struct {
+    min: [4]f32 align(16), // 4th element is ignored
+    max: [4]f32 align(16), // 4th element is ignored
+
+    comptime {
+        assert(@sizeOf(AABox) == @sizeOf(c.JPC_AABox));
+        assert(@offsetOf(AABox, "min") == @offsetOf(c.JPC_AABox, "min"));
+        assert(@offsetOf(AABox, "max") == @offsetOf(c.JPC_AABox, "max"));
+    }
+};
+
+pub const RMatrix = extern struct {
+    column_0: [4]f32 align(16),
+    column_1: [4]f32 align(16),
+    column_2: [4]f32 align(16),
+    column_3: [4]Real align(rvec_align),
+
+    comptime {
+        assert(@sizeOf(RMatrix) == @sizeOf(c.JPC_RMatrix));
+        assert(@offsetOf(RMatrix, "column_1") == @offsetOf(c.JPC_RMatrix, "column_1"));
+        assert(@offsetOf(RMatrix, "column_3") == @offsetOf(c.JPC_RMatrix, "column_3"));
     }
 };
 
@@ -1027,7 +1218,7 @@ pub const DebugRenderer = if (!debug_renderer_enabled) extern struct {} else ext
             }
             pub inline fn drawGeometry(
                 self: *T,
-                model_matrix: *const [16]Real,
+                model_matrix: *const RMatrix,
                 world_space_bound: *const AABox,
                 lod_scale_sq: f32,
                 color: Color,
@@ -1097,7 +1288,7 @@ pub const DebugRenderer = if (!debug_renderer_enabled) extern struct {} else ext
             ) callconv(.C) *anyopaque = null,
             drawGeometry: ?*const fn (
                 self: *T,
-                model_matrix: *const [16]Real,
+                model_matrix: *const RMatrix,
                 world_space_bound: *const AABox,
                 lod_scale_sq: f32,
                 color: Color,
@@ -1132,11 +1323,6 @@ pub const DebugRenderer = if (!debug_renderer_enabled) extern struct {} else ext
         normal: [3]f32,
         uv: [2]f32,
         color: Color,
-    };
-
-    pub const AABox = extern struct {
-        min: [3]f32,
-        max: [3]f32,
     };
 
     pub const LOD = extern struct {
@@ -1224,13 +1410,24 @@ const SizeAndAlignment = packed struct(u64) {
     size: u48,
     alignment: u16,
 };
-var mem_allocator: ?std.mem.Allocator = null;
-var mem_allocations: ?std.AutoHashMap(usize, SizeAndAlignment) = null;
-var mem_mutex: std.Thread.Mutex = .{};
 const mem_alignment = 16;
+pub const GlobalState = struct {
+    mem_allocator: std.mem.Allocator,
+    mem_allocations: std.AutoHashMap(usize, SizeAndAlignment),
+    mem_mutex: std.Thread.Mutex = .{},
 
-var temp_allocator: ?*TempAllocator = null;
-var job_system: ?*JobSystem = null;
+    temp_allocator: *TempAllocator,
+    job_system: *JobSystem,
+};
+var state: ?GlobalState = null;
+
+pub const TraceFunc = *const fn (fmt: ?[*:0]const u8, ...) callconv(.C) void;
+pub const AssertFailedFunc = *const fn (
+    expression: ?[*:0]const u8,
+    message: ?[*:0]const u8,
+    file: ?[*:0]const u8,
+    line: u32,
+) callconv(.C) bool;
 
 pub fn init(allocator: std.mem.Allocator, args: struct {
     temp_allocator_size: u32 = 16 * 1024 * 1024,
@@ -1238,32 +1435,57 @@ pub fn init(allocator: std.mem.Allocator, args: struct {
     max_barriers: u32 = max_physics_barriers,
     num_threads: i32 = -1,
 }) !void {
-    std.debug.assert(mem_allocator == null and mem_allocations == null);
+    std.debug.assert(state == null);
 
-    mem_allocator = allocator;
-    mem_allocations = std.AutoHashMap(usize, SizeAndAlignment).init(allocator);
-    mem_allocations.?.ensureTotalCapacity(32) catch unreachable;
+    state = .{
+        .mem_allocator = allocator,
+        .mem_allocations = std.AutoHashMap(usize, SizeAndAlignment).init(allocator),
+        .temp_allocator = undefined,
+        .job_system = undefined,
+    };
 
-    c.JPC_RegisterCustomAllocator(zphysicsAlloc, zphysicsFree, zphysicsAlignedAlloc, zphysicsFree);
+    state.?.mem_allocations.ensureTotalCapacity(32) catch unreachable;
+
+    c.JPC_RegisterCustomAllocator(zphysicsAlloc, zphysicsRealloc, zphysicsFree, zphysicsAlignedAlloc, zphysicsFree);
 
     c.JPC_CreateFactory();
     c.JPC_RegisterTypes();
 
-    assert(temp_allocator == null and job_system == null);
-    temp_allocator = @as(*TempAllocator, @ptrCast(c.JPC_TempAllocator_Create(args.temp_allocator_size)));
-    job_system = @as(*JobSystem, @ptrCast(c.JPC_JobSystem_Create(args.max_jobs, args.max_barriers, args.num_threads)));
+    state.?.temp_allocator = @as(*TempAllocator, @ptrCast(c.JPC_TempAllocator_Create(args.temp_allocator_size)));
+    state.?.job_system = @as(*JobSystem, @ptrCast(c.JPC_JobSystem_Create(args.max_jobs, args.max_barriers, args.num_threads)));
+}
+
+pub fn preReload() GlobalState {
+    const tmp = state.?;
+    state = null;
+    return tmp;
+}
+
+pub fn postReload(allocator: std.mem.Allocator, prev_state: GlobalState) void {
+    std.debug.assert(state == null);
+
+    state = prev_state;
+    state.?.mem_allocator = allocator;
+    state.?.mem_allocations.allocator = allocator;
+
+    c.JPC_RegisterCustomAllocator(zphysicsAlloc, zphysicsRealloc, zphysicsFree, zphysicsAlignedAlloc, zphysicsFree);
 }
 
 pub fn deinit() void {
-    c.JPC_JobSystem_Destroy(@as(*c.JPC_JobSystem, @ptrCast(job_system)));
-    job_system = null;
-    c.JPC_TempAllocator_Destroy(@as(*c.JPC_TempAllocator, @ptrCast(temp_allocator)));
-    temp_allocator = null;
+    c.JPC_JobSystem_Destroy(@as(*c.JPC_JobSystem, @ptrCast(state.?.job_system)));
+    c.JPC_TempAllocator_Destroy(@as(*c.JPC_TempAllocator, @ptrCast(state.?.temp_allocator)));
     c.JPC_DestroyFactory();
 
-    mem_allocations.?.deinit();
-    mem_allocations = null;
-    mem_allocator = null;
+    state.?.mem_allocations.deinit();
+    state = null;
+}
+
+pub fn registerTrace(trace: ?TraceFunc) void {
+    c.JPC_RegisterTrace(trace);
+}
+
+pub fn registerAssertFailed(assert_failed: ?AssertFailedFunc) void {
+    c.JPC_RegisterAssertFailed(assert_failed);
 }
 //--------------------------------------------------------------------------------------------------
 //
@@ -1301,7 +1523,10 @@ pub const PhysicsSystem = opaque {
         return c.JPC_PhysicsSystem_GetNumBodies(@as(*const c.JPC_PhysicsSystem, @ptrCast(physics_system)));
     }
     pub fn getNumActiveBodies(physics_system: *const PhysicsSystem) u32 {
-        return c.JPC_PhysicsSystem_GetNumActiveBodies(@as(*const c.JPC_PhysicsSystem, @ptrCast(physics_system)));
+        return c.JPC_PhysicsSystem_GetNumActiveBodies(
+            @as(*const c.JPC_PhysicsSystem, @ptrCast(physics_system)),
+            @intFromEnum(BodyType.rigid_body),
+        );
     }
     pub fn getMaxBodies(physics_system: *const PhysicsSystem) u32 {
         return c.JPC_PhysicsSystem_GetMaxBodies(@as(*const c.JPC_PhysicsSystem, @ptrCast(physics_system)));
@@ -1404,16 +1629,14 @@ pub const PhysicsSystem = opaque {
         delta_time: f32,
         args: struct {
             collision_steps: i32 = 1,
-            integration_sub_steps: i32 = 1,
         },
     ) !void {
         const res = c.JPC_PhysicsSystem_Update(
             @as(*c.JPC_PhysicsSystem, @ptrCast(physics_system)),
             delta_time,
             args.collision_steps,
-            args.integration_sub_steps,
-            @as(*c.JPC_TempAllocator, @ptrCast(temp_allocator)),
-            @as(*c.JPC_JobSystem, @ptrCast(job_system)),
+            @as(*c.JPC_TempAllocator, @ptrCast(state.?.temp_allocator)),
+            @as(*c.JPC_JobSystem, @ptrCast(state.?.job_system)),
         );
 
         switch (res) {
@@ -1754,7 +1977,7 @@ pub const BodyInterface = opaque {
         return rotation;
     }
 
-    pub fn setRotation(body_iface: *BodyInterface, body_id: BodyId, in_rotation: [4]Real, in_activation_type: Activation) void {
+    pub fn setRotation(body_iface: *BodyInterface, body_id: BodyId, in_rotation: [4]f32, in_activation_type: Activation) void {
         c.JPC_BodyInterface_SetRotation(@as(*c.JPC_BodyInterface, @ptrCast(body_iface)), body_id, &in_rotation, @intFromEnum(in_activation_type));
     }
 
@@ -1916,6 +2139,7 @@ pub const Body = extern struct {
 
     object_layer: ObjectLayer,
 
+    body_type: BodyType,
     broad_phase_layer: BroadPhaseLayer,
     motion_type: MotionType,
     flags: u8,
@@ -2277,6 +2501,21 @@ pub const Character = opaque {
 //
 //--------------------------------------------------------------------------------------------------
 pub const CharacterVirtual = opaque {
+    pub const ExtendedUpdateSettings = extern struct {
+        stick_to_floor_step_down: [4]f32 align(16) = .{ 0, -0.5, 0, 0 }, // 4th element is ignored
+        walk_stairs_step_up: [4]f32 align(16) = .{ 0, 0.4, 0, 0 }, // 4th element is ignored
+        walk_stairs_min_step_forward: f32 = 0.02,
+        walk_stairs_step_forward_test: f32 = 0.15,
+        walk_stairs_cos_angle_forward_contact: f32 = std.math.cos(std.math.degreesToRadians(75.0)),
+        walk_stairs_step_down_extra: [4]f32 align(16) = .{ 0, 0, 0, 0 }, // 4th element is ignored
+
+        comptime {
+            assert(@sizeOf(ExtendedUpdateSettings) == @sizeOf(c.JPC_CharacterVirtual_ExtendedUpdateSettings));
+            assert(@offsetOf(ExtendedUpdateSettings, "walk_stairs_cos_angle_forward_contact") ==
+                @offsetOf(c.JPC_CharacterVirtual_ExtendedUpdateSettings, "walk_stairs_cos_angle_forward_contact"));
+        }
+    };
+
     pub fn create(
         in_settings: *const CharacterVirtualSettings,
         in_position: [3]Real,
@@ -2314,7 +2553,32 @@ pub const CharacterVirtual = opaque {
             args.object_layer_filter,
             args.body_filter,
             args.shape_filter,
-            @as(*c.JPC_TempAllocator, @ptrCast(temp_allocator)),
+            @as(*c.JPC_TempAllocator, @ptrCast(state.?.temp_allocator)),
+        );
+    }
+
+    pub fn extendedUpdate(
+        character: *CharacterVirtual,
+        delta_time: f32,
+        gravity: [3]f32,
+        settings: *const ExtendedUpdateSettings,
+        args: struct {
+            broad_phase_layer_filter: ?*const BroadPhaseLayerFilter = null,
+            object_layer_filter: ?*const ObjectLayerFilter = null,
+            body_filter: ?*const BodyFilter = null,
+            shape_filter: ?*const ShapeFilter = null,
+        },
+    ) void {
+        c.JPC_CharacterVirtual_ExtendedUpdate(
+            @as(*c.JPC_CharacterVirtual, @ptrCast(character)),
+            delta_time,
+            &gravity,
+            settings,
+            args.broad_phase_layer_filter,
+            args.object_layer_filter,
+            args.body_filter,
+            args.shape_filter,
+            @as(*c.JPC_TempAllocator, @ptrCast(state.?.temp_allocator)),
         );
     }
 
@@ -2367,6 +2631,8 @@ pub const CharacterVirtual = opaque {
 //
 //--------------------------------------------------------------------------------------------------
 pub const MotionProperties = extern struct {
+    pub const inactive_index: u32 = std.math.maxInt(u32);
+
     linear_velocity: [4]f32 align(16), // 4th element is ignored
     angular_velocity: [4]f32 align(16), // 4th element is ignored
     inv_inertia_diagonal: [4]f32 align(16),
@@ -2380,13 +2646,17 @@ pub const MotionProperties = extern struct {
     max_linear_velocity: f32,
     max_angular_velocity: f32,
     gravity_factor: f32,
-    index_in_active_bodies: u32,
-    island_index: u32,
+    index_in_active_bodies: u32 = inactive_index,
+    island_index: u32 = inactive_index,
 
     motion_quality: MotionQuality,
     allow_sleeping: bool,
 
-    reserved: [52 + c.JPC_ENABLE_ASSERTS * 3 + c.JPC_DOUBLE_PRECISION * 24]u8 align(4 + 4 * c.JPC_DOUBLE_PRECISION),
+    allowed_DOFs: AllowedDOFs = .all,
+    num_velocity_steps_override: u8 = 0,
+    num_position_steps_override: u8 = 0,
+
+    reserved: [53 + c.JPC_ENABLE_ASSERTS * 3 + c.JPC_DOUBLE_PRECISION * 24]u8 align(4 + 4 * c.JPC_DOUBLE_PRECISION),
 
     pub fn getMotionQuality(motion: *const MotionProperties) MotionQuality {
         return @as(MotionQuality, @enumFromInt(c.JPC_MotionProperties_GetMotionQuality(
@@ -2485,9 +2755,14 @@ pub const MotionProperties = extern struct {
         c.JPC_MotionProperties_SetGravityFactor(@as(*c.JPC_MotionProperties, @ptrCast(motion)), factor);
     }
 
-    pub fn setMassProperties(motion: *MotionProperties, mass_properties: MassProperties) void {
+    pub fn setMassProperties(
+        motion: *MotionProperties,
+        allowed_DOFs: AllowedDOFs,
+        mass_properties: MassProperties,
+    ) void {
         c.JPC_MotionProperties_SetMassProperties(
             @as(*c.JPC_MotionProperties, @ptrCast(motion)),
+            @intFromEnum(allowed_DOFs),
             @as(*const c.JPC_MassProperties, @ptrCast(&mass_properties)),
         );
     }
@@ -2557,6 +2832,10 @@ pub const MotionProperties = extern struct {
         assert(@offsetOf(MotionProperties, "force") == @offsetOf(c.JPC_MotionProperties, "force"));
         assert(@offsetOf(MotionProperties, "motion_quality") == @offsetOf(c.JPC_MotionProperties, "motion_quality"));
         assert(@offsetOf(MotionProperties, "gravity_factor") == @offsetOf(c.JPC_MotionProperties, "gravity_factor"));
+        assert(@offsetOf(MotionProperties, "num_position_steps_override") == @offsetOf(
+            c.JPC_MotionProperties,
+            "num_position_steps_override",
+        ));
     }
 };
 //--------------------------------------------------------------------------------------------------
@@ -3031,8 +3310,8 @@ pub const DecoratedShapeSettings = opaque {
 
     pub fn createRotatedTranslated(
         inner_shape: *const ShapeSettings,
-        rotation: [4]Real,
-        translation: [3]Real,
+        rotation: [4]f32,
+        translation: [3]f32,
     ) !*DecoratedShapeSettings {
         const settings = c.JPC_RotatedTranslatedShapeSettings_Create(
             @as(*const c.JPC_ShapeSettings, @ptrCast(inner_shape)),
@@ -3043,7 +3322,7 @@ pub const DecoratedShapeSettings = opaque {
         return @as(*DecoratedShapeSettings, @ptrCast(settings));
     }
 
-    pub fn createScaled(inner_shape: *const ShapeSettings, scale: [3]Real) !*DecoratedShapeSettings {
+    pub fn createScaled(inner_shape: *const ShapeSettings, scale: [3]f32) !*DecoratedShapeSettings {
         const settings = c.JPC_ScaledShapeSettings_Create(
             @as(*const c.JPC_ShapeSettings, @ptrCast(inner_shape)),
             &scale,
@@ -3052,7 +3331,7 @@ pub const DecoratedShapeSettings = opaque {
         return @as(*DecoratedShapeSettings, @ptrCast(settings));
     }
 
-    pub fn createOffsetCenterOfMass(inner_shape: *const ShapeSettings, offset: [3]Real) !*DecoratedShapeSettings {
+    pub fn createOffsetCenterOfMass(inner_shape: *const ShapeSettings, offset: [3]f32) !*DecoratedShapeSettings {
         const settings = c.JPC_OffsetCenterOfMassShapeSettings_Create(
             @as(*const c.JPC_ShapeSettings, @ptrCast(inner_shape)),
             &offset,
@@ -3081,7 +3360,7 @@ pub const CompoundShapeSettings = opaque {
         return @as(*CompoundShapeSettings, @ptrCast(settings));
     }
 
-    pub fn addShape(settings: *CompoundShapeSettings, position: [3]Real, rotation: [4]Real, shape: *const ShapeSettings, user_data: u32) void {
+    pub fn addShape(settings: *CompoundShapeSettings, position: [3]f32, rotation: [4]f32, shape: *const ShapeSettings, user_data: u32) void {
         c.JPC_CompoundShapeSettings_AddShape(
             @as(*c.JPC_CompoundShapeSettings, @ptrCast(settings)),
             &position,
@@ -3144,6 +3423,16 @@ pub const Shape = opaque {
         user_convex8 = c.JPC_SHAPE_SUB_TYPE_USER_CONVEX8,
     };
 
+    pub const SupportingFace = extern struct {
+        num_points: u32 align(16),
+        points: [32][4]f32 align(16), // 4th element is ignored; world space
+
+        comptime {
+            assert(@sizeOf(SupportingFace) == @sizeOf(c.JPC_Shape_SupportingFace));
+            assert(@offsetOf(SupportingFace, "points") == @offsetOf(c.JPC_Shape_SupportingFace, "points"));
+        }
+    };
+
     fn Methods(comptime T: type) type {
         return struct {
             pub fn asShape(shape: *const T) *const Shape {
@@ -3183,14 +3472,93 @@ pub const Shape = opaque {
                 return c.JPC_Shape_SetUserData(@as(*c.JPC_Shape, @ptrCast(shape)), user_data);
             }
 
-            pub fn getCenterOfMass(shape: *const T) [3]Real {
-                var center: [3]Real = undefined;
+            pub fn getVolume(shape: *const T) f32 {
+                return c.JPC_Shape_GetVolume(@as(*const c.JPC_Shape, @ptrCast(shape)));
+            }
+
+            pub fn getCenterOfMass(shape: *const T) [3]f32 {
+                var center: [3]f32 = undefined;
                 c.JPC_Shape_GetCenterOfMass(@as(*const c.JPC_Shape, @ptrCast(shape)), &center);
                 return center;
+            }
+
+            pub fn getLocalBounds(shape: *const T) AABox {
+                const aabox = c.JPC_Shape_GetLocalBounds(@as(*const c.JPC_Shape, @ptrCast(shape)));
+                return @as(*AABox, @constCast(@ptrCast(&aabox))).*;
+            }
+
+            pub fn getSurfaceNormal(shape: *const T, sub_shape_id: SubShapeId, local_pos: [3]f32) [3]f32 {
+                var normal: [3]f32 = undefined;
+                c.JPC_Shape_GetSurfaceNormal(
+                    @as(*const c.JPC_Shape, @ptrCast(shape)),
+                    sub_shape_id,
+                    &local_pos,
+                    &normal,
+                );
+                return normal;
+            }
+
+            pub fn getSupportingFace(
+                shape: *const T,
+                sub_shape_id: SubShapeId,
+                direction: [3]f32,
+                shape_scale: [3]f32,
+                com_transform: [16]f32,
+            ) SupportingFace {
+                const c_face = c.JPC_Shape_GetSupportingFace(
+                    @as(*const c.JPC_Shape, @ptrCast(shape)),
+                    sub_shape_id,
+                    &direction,
+                    &shape_scale,
+                    &com_transform,
+                );
+                return @as(*const SupportingFace, @ptrCast(&c_face)).*;
+            }
+
+            pub fn castRay(
+                shape: *const T,
+                ray: RayCast,
+                args: struct {
+                    sub_shape_id_creator: SubShapeIDCreator = .{},
+                },
+            ) struct { has_hit: bool, hit: RayCastResult } {
+                var hit: RayCastResult = .{};
+                const has_hit = c.JPC_Shape_CastRay(
+                    @as(*const c.JPC_Shape, @ptrCast(shape)),
+                    @as(*const c.JPC_RayCast, @ptrCast(&ray)),
+                    @as(*const c.JPC_SubShapeIDCreator, @ptrCast(&args.sub_shape_id_creator)),
+                    @as(*c.JPC_RayCastResult, @ptrCast(&hit)),
+                );
+                return .{ .has_hit = has_hit, .hit = hit };
             }
         };
     }
 };
+
+//--------------------------------------------------------------------------------------------------
+//
+// BoxShape (-> Shape)
+//
+//--------------------------------------------------------------------------------------------------
+pub const BoxShape = opaque {
+    pub usingnamespace Shape.Methods(@This());
+
+    pub fn asBoxShape(shape: *const Shape) *const BoxShape {
+        assert(shape.getSubType() == .box);
+        return @as(*const BoxShape, @ptrCast(shape));
+    }
+    pub fn asBoxShapeMut(shape: *Shape) *BoxShape {
+        assert(shape.getSubType() == .box);
+        return @as(*BoxShape, @ptrCast(shape));
+    }
+
+    pub fn getHalfExtent(shape: *const BoxShape) [3]f32 {
+        var half_extent: [3]f32 = undefined;
+        c.JPC_BoxShape_GetHalfExtent(@as(*const c.JPC_BoxShape, @ptrCast(shape)), &half_extent);
+        return half_extent;
+    }
+};
+
 //--------------------------------------------------------------------------------------------------
 //
 // ConvexHullShape (-> Shape)
@@ -3420,17 +3788,17 @@ pub const Constraint = opaque {
 //
 //--------------------------------------------------------------------------------------------------
 fn zphysicsAlloc(size: usize) callconv(.C) ?*anyopaque {
-    mem_mutex.lock();
-    defer mem_mutex.unlock();
+    state.?.mem_mutex.lock();
+    defer state.?.mem_mutex.unlock();
 
-    const ptr = mem_allocator.?.rawAlloc(
+    const ptr = state.?.mem_allocator.rawAlloc(
         size,
         std.math.log2_int(u29, @as(u29, @intCast(mem_alignment))),
         @returnAddress(),
     );
     if (ptr == null) @panic("zphysics: out of memory");
 
-    mem_allocations.?.put(
+    state.?.mem_allocations.put(
         @intFromPtr(ptr),
         .{ .size = @as(u48, @intCast(size)), .alignment = mem_alignment },
     ) catch @panic("zphysics: out of memory");
@@ -3438,18 +3806,44 @@ fn zphysicsAlloc(size: usize) callconv(.C) ?*anyopaque {
     return ptr;
 }
 
-fn zphysicsAlignedAlloc(size: usize, alignment: usize) callconv(.C) ?*anyopaque {
-    mem_mutex.lock();
-    defer mem_mutex.unlock();
+fn zphysicsRealloc(maybe_ptr: ?*anyopaque, reported_old_size: usize, new_size: usize) callconv(.C) ?*anyopaque {
+    state.?.mem_mutex.lock();
+    defer state.?.mem_mutex.unlock();
 
-    const ptr = mem_allocator.?.rawAlloc(
+    const old_size = if (maybe_ptr != null) reported_old_size else 0;
+
+    const old_mem = if (old_size > 0)
+        @as([*]align(mem_alignment) u8, @ptrCast(@alignCast(maybe_ptr)))[0..old_size]
+    else
+        @as([*]align(mem_alignment) u8, undefined)[0..0];
+
+    const mem = state.?.mem_allocator.realloc(old_mem, new_size) catch @panic("zphysics: out of memory");
+
+    if (maybe_ptr != null) {
+        const removed = state.?.mem_allocations.remove(@intFromPtr(maybe_ptr.?));
+        std.debug.assert(removed);
+    }
+
+    state.?.mem_allocations.put(
+        @intFromPtr(mem.ptr),
+        .{ .size = @as(u48, @intCast(new_size)), .alignment = mem_alignment },
+    ) catch @panic("zphysics: out of memory");
+
+    return mem.ptr;
+}
+
+fn zphysicsAlignedAlloc(size: usize, alignment: usize) callconv(.C) ?*anyopaque {
+    state.?.mem_mutex.lock();
+    defer state.?.mem_mutex.unlock();
+
+    const ptr = state.?.mem_allocator.rawAlloc(
         size,
         std.math.log2_int(u29, @as(u29, @intCast(alignment))),
         @returnAddress(),
     );
     if (ptr == null) @panic("zphysics: out of memory");
 
-    mem_allocations.?.put(
+    state.?.mem_allocations.put(
         @intFromPtr(ptr),
         .{ .size = @as(u32, @intCast(size)), .alignment = @as(u16, @intCast(alignment)) },
     ) catch @panic("zphysics: out of memory");
@@ -3459,14 +3853,14 @@ fn zphysicsAlignedAlloc(size: usize, alignment: usize) callconv(.C) ?*anyopaque 
 
 fn zphysicsFree(maybe_ptr: ?*anyopaque) callconv(.C) void {
     if (maybe_ptr) |ptr| {
-        mem_mutex.lock();
-        defer mem_mutex.unlock();
+        state.?.mem_mutex.lock();
+        defer state.?.mem_mutex.unlock();
 
-        const info = mem_allocations.?.fetchRemove(@intFromPtr(ptr)).?.value;
+        const info = state.?.mem_allocations.fetchRemove(@intFromPtr(ptr)).?.value;
 
         const mem = @as([*]u8, @ptrCast(ptr))[0..info.size];
 
-        mem_allocator.?.rawFree(
+        state.?.mem_allocator.rawFree(
             mem,
             std.math.log2_int(u29, @as(u29, @intCast(info.alignment))),
             @returnAddress(),
@@ -3612,7 +4006,7 @@ test "zphysics.basic" {
     physics_system.addStepListener(@ptrCast(@alignCast(&my_step_listener)));
 
     physics_system.optimizeBroadPhase();
-    try physics_system.update(1.0 / 60.0, .{ .collision_steps = 1, .integration_sub_steps = 1 });
+    try physics_system.update(1.0 / 60.0, .{ .collision_steps = 1 });
     try physics_system.update(1.0 / 60.0, .{});
 
     physics_system.removeStepListener(@ptrCast(@alignCast(&my_step_listener)));
@@ -3982,6 +4376,14 @@ test "zphysics.body.basic" {
 
     const floor_shape = try floor_shape_settings.createShape();
     defer floor_shape.release();
+
+    var shape_ray = RayCast{ .origin = .{ 0, 2, 0, 1 }, .direction = .{ 101, -1, 0, 0 } };
+    var shape_result = floor_shape.castRay(shape_ray, .{});
+    try expect(shape_result.has_hit == false);
+
+    shape_ray = RayCast{ .origin = .{ 0, 2, 0, 1 }, .direction = .{ 100, -1, 0, 0 } };
+    shape_result = floor_shape.castRay(shape_ray, .{});
+    try expect(shape_result.has_hit == true);
 
     const floor_settings = BodyCreationSettings{
         .position = .{ 0.0, -1.0, 0.0, 1.0 },
@@ -4402,7 +4804,7 @@ const test_cb1 = struct {
             .drawText3D = drawText3D,
         };
 
-        pub fn shouldBodyDraw(_: *const Body) align(DebugRenderer.BodyDrawFilterFuncAlignment) callconv(.C) bool {
+        pub fn shouldBodyDraw(_: *const Body) callconv(.C) bool {
             return true;
         }
 
@@ -4458,8 +4860,8 @@ const test_cb1 = struct {
         }
         fn drawGeometry(
             self: *MyDebugRenderer,
-            model_matrix: *const [16]Real,
-            world_space_bound: *const DebugRenderer.AABox,
+            model_matrix: *const RMatrix,
+            world_space_bound: *const AABox,
             lod_scale_sq: f32,
             color: DebugRenderer.Color,
             geometry: *const DebugRenderer.Geometry,

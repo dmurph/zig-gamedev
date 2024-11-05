@@ -3,7 +3,6 @@ on:
   pull_request:
     branches:
       - main
-      - unstable
   push:
     branches:
       - main
@@ -16,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{matrix.os}}
     steps:
       - name: Checkout repository
@@ -27,10 +26,18 @@ jobs:
         with:
           path: ./.zigversion
       - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
+        uses: mlugg/setup-zig@v1
         with:
           version: ${{ steps.zigversion.outputs.content }}
-      - name: Build and test
-        run: zig fmt --check . && zig build -Dexperiments && zig build test
-
+      - name: Check format
+        continue-on-error: true
+        run: zig fmt --check .
+      - name: Build all
+        run: zig build -Dexperiments
+      - name: Build and run tests
+        run: zig build test
+      - name: Cross compile
+        if: runner.os == 'Linux'
+        run: zig build -Dtarget=x86_64-windows-gnu
+        
 

@@ -329,7 +329,7 @@ pub inline fn boolx16(
 // zig fmt: on
 
 pub inline fn veclen(comptime T: type) comptime_int {
-    return @typeInfo(T).Vector.len;
+    return @typeInfo(T).vector.len;
 }
 
 pub inline fn splat(comptime T: type, value: f32) T {
@@ -413,14 +413,14 @@ pub inline fn storeArr4(arr: *[4]f32, v: F32x4) void {
 }
 
 pub inline fn arr3Ptr(ptr: anytype) *const [3]f32 {
-    comptime assert(@typeInfo(@TypeOf(ptr)) == .Pointer);
+    comptime assert(@typeInfo(@TypeOf(ptr)) == .pointer);
     const T = std.meta.Child(@TypeOf(ptr));
     comptime assert(T == F32x4);
     return @as(*const [3]f32, @ptrCast(ptr));
 }
 
 pub inline fn arrNPtr(ptr: anytype) [*]const f32 {
-    comptime assert(@typeInfo(@TypeOf(ptr)) == .Pointer);
+    comptime assert(@typeInfo(@TypeOf(ptr)) == .pointer);
     const T = std.meta.Child(@TypeOf(ptr));
     comptime assert(T == Mat or T == F32x4 or T == F32x8 or T == F32x16);
     return @as([*]const f32, @ptrCast(ptr));
@@ -4516,7 +4516,7 @@ pub fn expectVecApproxEqAbs(expected: anytype, actual: anytype, eps: f32) !void 
     }
 }
 
-pub fn vecApproxEqAbs(v0: anytype, v1: anytype, eps: f32) bool {
+pub fn approxEqAbs(v0: anytype, v1: anytype, eps: f32) bool {
     const T = @TypeOf(v0, v1);
     comptime var i: comptime_int = 0;
     inline while (i < veclen(T)) : (i += 1) {

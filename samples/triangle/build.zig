@@ -19,20 +19,16 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .optimize = options.optimize,
     });
 
-    @import("system_sdk").addLibraryPathsTo(exe);
-
-    const zwin32 = b.dependency("zwin32", .{
-        .target = options.target,
+    const zwindows = b.dependency("zwindows", .{
+        .zxaudio2_debug_layer = options.zxaudio2_debug_layer,
+        .zd3d12_debug_layer = options.zd3d12_debug_layer,
+        .zd3d12_gbv = options.zd3d12_gbv,
     });
-    const zwin32_module = zwin32.module("root");
-    exe.root_module.addImport("zwin32", zwin32_module);
+    const zwindows_module = zwindows.module("zwindows");
+    const zd3d12_module = zwindows.module("zd3d12");
 
-    const zd3d12 = b.dependency("zd3d12", .{
-        .target = options.target,
-        .debug_layer = options.zd3d12_enable_debug_layer,
-        .gbv = options.zd3d12_enable_gbv,
-    });
-    const zd3d12_module = zd3d12.module("root");
+    exe.root_module.addImport("zwindows", zwindows_module);
+    exe.root_module.addImport("zd3d12", zd3d12_module);
     exe.root_module.addImport("zd3d12", zd3d12_module);
 
     const zpix = b.dependency("zpix", .{
@@ -42,7 +38,7 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
     exe.root_module.addImport("zpix", zpix.module("root"));
 
     @import("../common/build.zig").link(exe, .{
-        .zwin32 = zwin32_module,
+        .zwindows = zwindows_module,
         .zd3d12 = zd3d12_module,
     });
 
@@ -57,13 +53,19 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .install_subdir = b.pathJoin(&.{ "bin", content_dir }),
     });
     if (builtin.os.tag == .windows or builtin.os.tag == .linux) {
-        const compile_shaders = @import("zwin32").addCompileShaders(b, demo_name, .{ .shader_ver = "6_6" });
+        const compile_shaders = @import("zwindows").addCompileShaders(b, demo_name, zwindows, .{ .shader_ver = "6_6" });
         const root_path = pathResolve(b, &.{ @src().file, "..", "..", ".." });
         const shaders_path = b.pathJoin(&.{ root_path, content_path, "shaders" });
 
         const common_hlsl_path = b.pathJoin(&.{ root_path, "samples", "common/src/hlsl/common.hlsl" });
         compile_shaders.addVsShader(common_hlsl_path, "vsImGui", b.pathJoin(&.{ shaders_path, "imgui.vs.cso" }), "PSO__IMGUI");
         compile_shaders.addPsShader(common_hlsl_path, "psImGui", b.pathJoin(&.{ shaders_path, "imgui.ps.cso" }), "PSO__IMGUI");
+
+        const hlsl_path = b.pathJoin(&.{ root_path, src_path, demo_name ++ ".hlsl" });
+        compile_shaders.addVsShader(hlsl_path, "vsTriangle", b.pathJoin(&.{ shaders_path, demo_name ++ ".vs.cso" }), "");
+        compile_shaders.addPsShader(hlsl_path, "psTriangle", b.pathJoin(&.{ shaders_path, demo_name ++ ".ps.cso" }), "");
+
+        install_content_step.step.dependOn(compile_shaders.step);
     }
     exe.step.dependOn(&install_content_step.step);
 
@@ -72,7 +74,7 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
     // is required by DirectX 12 Agility SDK.
     exe.rdynamic = true;
 
-    @import("zwin32").install_d3d12(&exe.step, .bin);
+    @import("zwindows").install_d3d12(&exe.step, zwindows, .bin);
 
     return exe;
 }

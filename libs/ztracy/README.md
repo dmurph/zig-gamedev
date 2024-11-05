@@ -1,4 +1,4 @@
-# ztracy v0.11.0 - performance markers for Tracy 0.10
+# ztracy v0.13.0 - performance markers for Tracy 0.11.1
 
 Initial Zig bindings created by [Martin Wickham](https://github.com/SpexGuy/Zig-Tracy)
 
@@ -13,11 +13,30 @@ Then in your `build.zig` add:
 
 ```zig
 pub fn build(b: *std.Build) void {
+    const options = .{
+        .enable_ztracy = b.option(
+            bool,
+            "enable_ztracy",
+            "Enable Tracy profile markers",
+        ) orelse false,
+        .enable_fibers = b.option(
+            bool,
+            "enable_fibers",
+            "Enable Tracy fiber support",
+        ) orelse false,
+        .on_demand = b.option(
+            bool,
+            "on_demand",
+            "Build tracy with TRACY_ON_DEMAND",
+        ) orelse false,
+    };
+
     const exe = b.addExecutable(.{ ... });
 
     const ztracy = b.dependency("ztracy", .{
-        .enable_ztracy = true,
-        .enable_fibers = true,
+        .enable_ztracy = options.enable_ztracy,
+        .enable_fibers = options.enable_fibers,
+        .on_demand = options.on_demand,
     });
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
@@ -26,7 +45,7 @@ pub fn build(b: *std.Build) void {
 
 Now in your code you may import and use `ztracy`. To build your project with Tracy enabled run:
 
-`zig build -Dztracy-enable=true`
+`zig build -Denable_ztracy=true`
 
 ```zig
 const ztracy = @import("ztracy");

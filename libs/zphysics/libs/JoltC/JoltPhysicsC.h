@@ -11,7 +11,9 @@
 // Const
 //
 //--------------------------------------------------------------------------------------------------
-#define JPC_API // TODO: Define this properly
+#ifndef JPC_API
+#define JPC_API
+#endif
 
 // Always turn on asserts in Debug mode
 #if defined(_DEBUG) || defined(JPH_ENABLE_ASSERTS)
@@ -38,6 +40,18 @@ typedef float JPC_Real;
     #define JPC_DEBUG_RENDERER 1
 #else
     #define JPC_DEBUG_RENDERER 0
+#endif
+
+#define _JPC_REFTARGET_HEADER struct { const void * __vfptr_header[1]; uint32_t ref_count; };
+
+#if defined(_MSC_VER)
+#define _JPC_VTABLE_HEADER const void* __vtable_header[1]
+// MSVC quirk: If the first member of a derived class has alignment > 8, then extra padding is inserted such that
+//             the first member of the base class has the same alignment.
+#define _JPC_REFTARGET_HEADER_ALIGN_16 struct { const void * __vtable_ptr[2]; uint32_t ref_count; };
+#else
+#define _JPC_VTABLE_HEADER const void* __vtable_header[2]
+#define _JPC_REFTARGET_HEADER_ALIGN_16 _JPC_REFTARGET_HEADER
 #endif
 
 #define JPC_PI 3.14159265358979323846f
@@ -82,10 +96,11 @@ enum
     JPC_SHAPE_TYPE_DECORATED    = 2,
     JPC_SHAPE_TYPE_MESH         = 3,
     JPC_SHAPE_TYPE_HEIGHT_FIELD = 4,
-    JPC_SHAPE_TYPE_USER1        = 5,
-    JPC_SHAPE_TYPE_USER2        = 6,
-    JPC_SHAPE_TYPE_USER3        = 7,
-    JPC_SHAPE_TYPE_USER4        = 8
+    JPC_SHAPE_TYPE_SOFT_BODY    = 5,
+    JPC_SHAPE_TYPE_USER1        = 6,
+    JPC_SHAPE_TYPE_USER2        = 7,
+    JPC_SHAPE_TYPE_USER3        = 8,
+    JPC_SHAPE_TYPE_USER4        = 9
 };
 
 typedef uint8_t JPC_ShapeSubType;
@@ -105,22 +120,23 @@ enum
     JPC_SHAPE_SUB_TYPE_OFFSET_CENTER_OF_MASS = 11,
     JPC_SHAPE_SUB_TYPE_MESH                  = 12,
     JPC_SHAPE_SUB_TYPE_HEIGHT_FIELD          = 13,
-    JPC_SHAPE_SUB_TYPE_USER1                 = 14,
-    JPC_SHAPE_SUB_TYPE_USER2                 = 15,
-    JPC_SHAPE_SUB_TYPE_USER3                 = 16,
-    JPC_SHAPE_SUB_TYPE_USER4                 = 17,
-    JPC_SHAPE_SUB_TYPE_USER5                 = 18,
-    JPC_SHAPE_SUB_TYPE_USER6                 = 19,
-    JPC_SHAPE_SUB_TYPE_USER7                 = 20,
-    JPC_SHAPE_SUB_TYPE_USER8                 = 21,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX1          = 22,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX2          = 23,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX3          = 24,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX4          = 25,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX5          = 26,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX6          = 27,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX7          = 28,
-    JPC_SHAPE_SUB_TYPE_USER_CONVEX8          = 29,
+    JPC_SHAPE_SUB_TYPE_SOFT_BODY             = 14,
+    JPC_SHAPE_SUB_TYPE_USER1                 = 15,
+    JPC_SHAPE_SUB_TYPE_USER2                 = 16,
+    JPC_SHAPE_SUB_TYPE_USER3                 = 17,
+    JPC_SHAPE_SUB_TYPE_USER4                 = 18,
+    JPC_SHAPE_SUB_TYPE_USER5                 = 19,
+    JPC_SHAPE_SUB_TYPE_USER6                 = 20,
+    JPC_SHAPE_SUB_TYPE_USER7                 = 21,
+    JPC_SHAPE_SUB_TYPE_USER8                 = 22,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX1          = 23,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX2          = 24,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX3          = 25,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX4          = 26,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX5          = 27,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX6          = 28,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX7          = 29,
+    JPC_SHAPE_SUB_TYPE_USER_CONVEX8          = 30,
 };
 
 typedef enum JPC_ConstraintType
@@ -174,6 +190,18 @@ enum
     JPC_MOTION_QUALITY_LINEAR_CAST = 1
 };
 
+typedef uint8_t JPC_AllowedDOFs;
+enum {
+    JPC_ALLOWED_DOFS_NONE          = 0b000000,
+    JPC_ALLOWED_DOFS_ALL           = 0b111111,
+    JPC_ALLOWED_DOFS_TRANSLATION_X = 0b000001,
+    JPC_ALLOWED_DOFS_TRANSLATION_Y = 0b000010,
+    JPC_ALLOWED_DOFS_TRANSLATION_Z = 0b000100,
+    JPC_ALLOWED_DOFS_ROTATION_X    = 0b001000,
+    JPC_ALLOWED_DOFS_ROTATION_Y    = 0b010000,
+    JPC_ALLOWED_DOFS_ROTATION_Z    = 0b100000,
+};
+
 typedef uint8_t JPC_OverrideMassProperties;
 enum
 {
@@ -212,6 +240,12 @@ enum
 {
     JPC_BACK_FACE_IGNORE  = 0,
     JPC_BACK_FACE_COLLIDE = 1
+};
+
+typedef uint8_t JPC_BodyType;
+enum {
+    JPC_BODY_TYPE_RIGID_BODY = 0,
+    JPC_BODY_TYPE_SOFT_BODY = 1,
 };
 
 #if JPC_DEBUG_RENDERER == 1
@@ -266,10 +300,18 @@ typedef uint32_t JPC_CollisionSubGroupID;
 
 // Must be 16 byte aligned
 typedef void *(*JPC_AllocateFunction)(size_t in_size);
+typedef void *(*JPC_ReallocateFunction)(void *in_block, size_t old_size, size_t new_size);
 typedef void (*JPC_FreeFunction)(void *in_block);
 
 typedef void *(*JPC_AlignedAllocateFunction)(size_t in_size, size_t in_alignment);
 typedef void (*JPC_AlignedFreeFunction)(void *in_block);
+
+typedef void (*JPC_TraceFunction)(const char *inFMT, ...);
+typedef bool (*JPC_AssertFailedFunction)(
+    const char* in_expression,
+    const char* in_message,
+    const char* in_file,
+    uint32_t in_line);
 //--------------------------------------------------------------------------------------------------
 //
 // Opaque Types
@@ -304,6 +346,7 @@ typedef struct JPC_PhysicsSystem JPC_PhysicsSystem;
 typedef struct JPC_SharedMutex   JPC_SharedMutex;
 
 typedef struct JPC_Shape           JPC_Shape;
+typedef struct JPC_BoxShape        JPC_BoxShape;
 typedef struct JPC_ConvexHullShape JPC_ConvexHullShape;
 
 typedef struct JPC_Constraint       JPC_Constraint;
@@ -351,10 +394,14 @@ typedef struct JPC_MotionProperties
     JPC_MotionQuality  motion_quality;
     bool               allow_sleeping;
 
+    JPC_AllowedDOFs    allowed_DOFs;
+    uint8_t            num_velocity_steps_override;
+    uint8_t            num_position_steps_override;
+
 #if JPC_DOUBLE_PRECISION == 1
-    alignas(8) uint8_t reserved[76];
+    alignas(8) uint8_t reserved[77];
 #else
-    alignas(4) uint8_t reserved[52];
+    alignas(4) uint8_t reserved[53];
 #endif
 
 #if JPC_ENABLE_ASSERTS == 1
@@ -381,10 +428,14 @@ typedef struct JPC_BodyCreationSettings
     JPC_ObjectLayer            object_layer;
     JPC_CollisionGroup         collision_group;
     JPC_MotionType             motion_type;
+    JPC_AllowedDOFs            allowed_DOFs;
     bool                       allow_dynamic_or_kinematic;
     bool                       is_sensor;
+    bool                       collide_kinematic_vs_non_dynamic;
     bool                       use_manifold_reduction;
+    bool                       apply_gyroscopic_force;
     JPC_MotionQuality          motion_quality;
+    bool                       enhanced_internal_edge_removal;
     bool                       allow_sleeping;
     float                      friction;
     float                      restitution;
@@ -393,6 +444,8 @@ typedef struct JPC_BodyCreationSettings
     float                      max_linear_velocity;
     float                      max_angular_velocity;
     float                      gravity_factor;
+    uint32_t                   num_velocity_steps_override;
+    uint32_t                   num_position_steps_override;
     JPC_OverrideMassProperties override_mass_properties;
     float                      inertia_multiplier;
     JPC_MassProperties         mass_properties_override;
@@ -419,6 +472,7 @@ typedef struct JPC_Body
 
     JPC_ObjectLayer         object_layer;
 
+    JPC_BodyType            body_type;
     JPC_BroadPhaseLayer     broad_phase_layer;
     JPC_MotionType          motion_type;
     uint8_t                 flags;
@@ -427,14 +481,12 @@ typedef struct JPC_Body
 // NOTE: Needs to be kept in sync
 typedef struct JPC_CharacterBaseSettings
 {
-#   if defined(_MSC_VER)
-        const void* __vtable_header[1];
-#   else
-        const void* __vtable_header[2];
-#   endif
+    _JPC_REFTARGET_HEADER_ALIGN_16;
+
     alignas(16) float   up[4]; // 4th element is ignored
     alignas(16) float   supporting_volume[4];
     float               max_slope_angle;
+    bool                enhanced_internal_edge_removal;
     const JPC_Shape *   shape;
 } JPC_CharacterBaseSettings;
 
@@ -465,6 +517,8 @@ typedef struct JPC_CharacterVirtualSettings
     uint32_t            max_num_hits;
     float               hit_reduction_cos_max_angle;
     float               penetration_recovery_speed;
+    const JPC_Shape *   inner_body_shape;
+    JPC_ObjectLayer     inner_body_layer;
 } JPC_CharacterVirtualSettings;
 
 // NOTE: Needs to be kept in sync with JPH::SubShapeIDCreator
@@ -510,7 +564,13 @@ typedef struct JPC_ContactSettings
 {
     float combined_friction;
     float combined_restitution;
+    float inv_mass_scale_1;
+    float inv_inertia_scale_1;
+    float inv_mass_scale_2;
+    float inv_inertia_scale_2;
     bool  is_sensor;
+    alignas(16) float relative_linear_surface_velocity[4]; // 4th element is ignored
+    alignas(16) float relative_angular_surface_velocity[4]; // 4th element is ignored
 } JPC_ContactSettings;
 
 // NOTE: Needs to be kept in sync with JPH::CollideShapeResult
@@ -560,6 +620,13 @@ typedef struct JPC_BodyLockWrite
     JPC_Body *                   body;
 } JPC_BodyLockWrite;
 
+// NOTE: Needs to be kept in sync with JPH::RayCast
+typedef struct JPC_RayCast
+{
+    alignas(16) float origin[4]; // 4th element is ignored
+    alignas(16) float direction[4]; // length of the vector is important; 4th element is ignored
+} JPC_RayCast;
+
 // NOTE: Needs to be kept in sync with JPH::RRayCast
 typedef struct JPC_RRayCast
 {
@@ -582,13 +649,39 @@ typedef struct JPC_RayCastSettings
     bool             treat_convex_as_solid;
 } JPC_RayCastSettings;
 
-#if JPC_DEBUG_RENDERER == 1
-// NOTE: Needs to be kept in sync with JPH::AABox
 typedef struct JPC_AABox
 {
-    float min[3];
-    float max[3];
+    alignas(16) float min[3];
+    alignas(16) float max[3];
 } JPC_AABox;
+
+typedef struct JPC_RMatrix
+{
+    alignas(16) float column_0[4];
+    alignas(16) float column_1[4];
+    alignas(16) float column_2[4];
+    JPC_RVEC_ALIGN JPC_Real column_3[4];
+} JPC_RMatrix;
+
+typedef struct JPC_Shape_SupportingFace
+{
+    alignas(16) uint32_t num_points;
+    alignas(16) float    points[32][4]; // 4th element is ignored; world space
+} JPC_Shape_SupportingFace;
+
+// NOTE: Needs to be kept in sync with JPH::CharacterVirtual::ExtendedUpdateSettings
+typedef struct JPC_CharacterVirtual_ExtendedUpdateSettings
+{
+    alignas(16) float stick_to_floor_step_down[4]; // 4th element is ignored;
+    alignas(16) float walk_stairs_step_up[4]; // 4th element is ignored;
+    float             walk_stairs_min_step_forward;
+    float             walk_stairs_step_forward_test;
+    float             walk_stairs_cos_angle_forward_contact;
+    alignas(16) float walk_stairs_step_down_extra[4]; // 4th element is ignored;
+} JPC_CharacterVirtual_ExtendedUpdateSettings;
+
+#if JPC_DEBUG_RENDERER == 1
+// NOTE: Needs to be kept in sync with JPH::AABox
 
 // NOTE: Needs to be kept in sync with JPH::Color
 typedef union JPC_Color
@@ -658,12 +751,6 @@ typedef bool (*JPC_BodyDrawFilterFunc)(const JPC_Body *);
 // Interfaces (virtual tables)
 //
 //--------------------------------------------------------------------------------------------------
-#if defined(_MSC_VER)
-#define _JPC_VTABLE_HEADER const void* __vtable_header[1]
-#else
-#define _JPC_VTABLE_HEADER const void* __vtable_header[2]
-#endif
-
 typedef struct JPC_BroadPhaseLayerInterfaceVTable
 {
     _JPC_VTABLE_HEADER;
@@ -795,6 +882,13 @@ typedef struct JPC_CharacterContactListenerVTable
                          const JPC_SubShapeID *sub_shape_id);
 
     // Required, *cannot* be NULL.
+    bool
+    (*OnCharacterContactValidate)(void *in_self,
+                                  const JPC_CharacterVirtual *in_character,
+                                  const JPC_CharacterVirtual *in_other_character,
+                                  const JPC_SubShapeID *sub_shape_id);
+
+    // Required, *cannot* be NULL.
     void
     (*OnContactAdded)(void *in_self,
                       const JPC_CharacterVirtual *in_character,
@@ -803,6 +897,16 @@ typedef struct JPC_CharacterContactListenerVTable
                       const JPC_Real contact_position[3],
                       const float contact_normal[3],
                       JPC_CharacterContactSettings *io_settings);
+
+    // Required, *cannot* be NULL.
+    void
+    (*OnCharacterContactAdded)(void *in_self,
+                               const JPC_CharacterVirtual *in_character,
+                               const JPC_CharacterVirtual *in_other_character,
+                               const JPC_SubShapeID *sub_shape_id,
+                               const JPC_Real contact_position[3],
+                               const float contact_normal[3],
+                               JPC_CharacterContactSettings *io_settings);
 
     // Required, *cannot* be NULL.
     void
@@ -816,6 +920,19 @@ typedef struct JPC_CharacterContactListenerVTable
                       const JPC_PhysicsMaterial *contact_material,
                       const float character_velocity_in[3],
                       float character_velocity_out[3]);
+
+    // Required, *cannot* be NULL.
+    void
+    (*OnCharacterContactSolve)(void *in_self,
+                               const JPC_CharacterVirtual *in_character,
+                               const JPC_CharacterVirtual *in_other_character,
+                               const JPC_SubShapeID *sub_shape_id,
+                               const JPC_Real contact_position[3],
+                               const float contact_normal[3],
+                               const float contact_velocity[3],
+                               const JPC_PhysicsMaterial *contact_material,
+                               const float character_velocity_in[3],
+                               float character_velocity_out[3]);
 } JPC_CharacterContactListenerVTable;
 
 typedef struct JPC_ContactListenerVTable
@@ -862,7 +979,12 @@ typedef struct JPC_DebugRendererVTable
 
     // Required, *cannot* be NULL.
     void
-    (*DrawTriangle)(void *in_self, JPC_Real in_v1[3], JPC_Real in_v2[3], JPC_Real in_v3[3], JPC_Color in_color);
+    (*DrawTriangle)(void *in_self,
+                    JPC_Real in_v1[3],
+                    JPC_Real in_v2[3],
+                    JPC_Real in_v3[3],
+                    JPC_Color in_color,
+                    JPC_CastShadow in_cast_shadow);
 
     // Required, *cannot* be NULL.
     JPC_DebugRenderer_TriangleBatch *
@@ -879,7 +1001,7 @@ typedef struct JPC_DebugRendererVTable
     // Required, *cannot* be NULL.
     void
     (*DrawGeometry)(void *in_self,
-                    const float inModelMatrix[16],
+                    const JPC_RMatrix* inModelMatrix,
                     const JPC_AABox *inWorldSpaceBounds,
                     float inLODScaleSq,
                     JPC_Color in_color,
@@ -903,9 +1025,17 @@ JPC_RegisterDefaultAllocator(void);
 
 JPC_API void
 JPC_RegisterCustomAllocator(JPC_AllocateFunction in_alloc,
+                            JPC_ReallocateFunction in_realloc,
                             JPC_FreeFunction in_free,
                             JPC_AlignedAllocateFunction in_aligned_alloc,
                             JPC_AlignedFreeFunction in_aligned_free);
+
+JPC_API void
+JPC_RegisterTrace(JPC_TraceFunction in_trace);
+
+JPC_API void
+JPC_RegisterAssertFailed(JPC_AssertFailedFunction in_assert_failed);
+
 JPC_API void
 JPC_CreateFactory(void);
 
@@ -1026,6 +1156,7 @@ JPC_MotionProperties_SetGravityFactor(JPC_MotionProperties *in_properties,
                                       float in_gravity_factor);
 JPC_API void
 JPC_MotionProperties_SetMassProperties(JPC_MotionProperties *in_properties,
+                                       JPC_AllowedDOFs in_allowed_DOFs,
                                        const JPC_MassProperties *in_mass_properties);
 JPC_API float
 JPC_MotionProperties_GetInverseMass(const JPC_MotionProperties *in_properties);
@@ -1123,7 +1254,7 @@ JPC_API uint32_t
 JPC_PhysicsSystem_GetNumBodies(const JPC_PhysicsSystem *in_physics_system);
 
 JPC_API uint32_t
-JPC_PhysicsSystem_GetNumActiveBodies(const JPC_PhysicsSystem *in_physics_system);
+JPC_PhysicsSystem_GetNumActiveBodies(const JPC_PhysicsSystem *in_physics_system, JPC_BodyType in_type);
 
 JPC_API uint32_t
 JPC_PhysicsSystem_GetMaxBodies(const JPC_PhysicsSystem *in_physics_system);
@@ -1159,7 +1290,6 @@ JPC_API JPC_PhysicsUpdateError
 JPC_PhysicsSystem_Update(JPC_PhysicsSystem *in_physics_system,
                          float in_delta_time,
                          int in_collision_steps,
-                         int in_integration_sub_steps,
                          JPC_TempAllocator *in_temp_allocator,
                          JPC_JobSystem *in_job_system);
 
@@ -1504,16 +1634,16 @@ JPC_MeshShapeSettings_Sanitize(JPC_MeshShapeSettings *in_settings);
 //--------------------------------------------------------------------------------------------------
 JPC_API JPC_DecoratedShapeSettings *
 JPC_RotatedTranslatedShapeSettings_Create(const JPC_ShapeSettings *in_inner_shape_settings,
-                                          const JPC_Real in_rotated[4],
-                                          const JPC_Real in_translated[3]);
+                                          const float in_rotated[4],
+                                          const float in_translated[3]);
 
 JPC_API JPC_DecoratedShapeSettings *
 JPC_ScaledShapeSettings_Create(const JPC_ShapeSettings *in_inner_shape_settings,
-                               const JPC_Real in_scale[3]);
+                               const float in_scale[3]);
 
 JPC_API JPC_DecoratedShapeSettings *
 JPC_OffsetCenterOfMassShapeSettings_Create(const JPC_ShapeSettings *in_inner_shape_settings,
-                                           const JPC_Real in_center_of_mass[3]);
+                                           const float in_center_of_mass[3]);
 //--------------------------------------------------------------------------------------------------
 //
 // JPC_CompoundShapeSettings (-> JPC_ShapeSettings)
@@ -1527,8 +1657,8 @@ JPC_MutableCompoundShapeSettings_Create();
 
 JPC_API void
 JPC_CompoundShapeSettings_AddShape(JPC_CompoundShapeSettings *in_settings,
-                                   const JPC_Real in_position[3],
-                                   const JPC_Real in_rotation[4],
+                                   const float in_position[3],
+                                   const float in_rotation[4],
                                    const JPC_ShapeSettings *in_shape,
                                    const uint32_t in_user_data);
 //--------------------------------------------------------------------------------------------------
@@ -1581,8 +1711,41 @@ JPC_Shape_GetUserData(const JPC_Shape *in_shape);
 JPC_API void
 JPC_Shape_SetUserData(JPC_Shape *in_shape, uint64_t in_user_data);
 
+JPC_API float
+JPC_Shape_GetVolume(const JPC_Shape *in_shape);
+
 JPC_API void
-JPC_Shape_GetCenterOfMass(const JPC_Shape *in_shape, JPC_Real out_position[3]);
+JPC_Shape_GetCenterOfMass(const JPC_Shape *in_shape, float out_position[3]);
+
+JPC_API JPC_AABox
+JPC_Shape_GetLocalBounds(const JPC_Shape *in_shape);
+
+JPC_API void
+JPC_Shape_GetSurfaceNormal(const JPC_Shape *in_shape,
+                           JPC_SubShapeID in_sub_shape_id,
+                           const float in_point[3],
+                           float out_normal[3]);
+
+JPC_API JPC_Shape_SupportingFace
+JPC_Shape_GetSupportingFace(const JPC_Shape *in_shape,
+                            JPC_SubShapeID in_sub_shape_id,
+                            const float in_direction[3],
+                            const float in_scale[3],
+                            const float in_transform[16]);
+
+JPC_API bool
+JPC_Shape_CastRay(const JPC_Shape *in_shape,
+                  const JPC_RayCast *in_ray,
+                  const JPC_SubShapeIDCreator *in_id_creator,
+                  JPC_RayCastResult *io_hit); // *Must* be default initialized (see JPC_RayCastResult)
+//--------------------------------------------------------------------------------------------------
+//
+// JPC_BoxShape
+//
+//--------------------------------------------------------------------------------------------------
+JPC_API void
+JPC_BoxShape_GetHalfExtent(const JPC_BoxShape *in_shape, float out_half_extent[3]);
+//--------------------------------------------------------------------------------------------------
 //--------------------------------------------------------------------------------------------------
 //
 // JPC_ConvexHullShape
@@ -1760,7 +1923,7 @@ JPC_BodyInterface_GetRotation(const JPC_BodyInterface *in_iface,
 JPC_API void
 JPC_BodyInterface_SetRotation(JPC_BodyInterface *in_iface,
                               JPC_BodyID in_body_id,
-                              const JPC_Real in_rotation[4],
+                              const float in_rotation[4],
                               JPC_Activation in_activation);
 JPC_API void
 JPC_BodyInterface_ActivateBody(JPC_BodyInterface *in_iface, JPC_BodyID in_body_id);
@@ -1805,7 +1968,7 @@ JPC_BodyInterface_AddImpulseAtPosition(JPC_BodyInterface *in_iface,
 JPC_API void
 JPC_BodyInterface_AddAngularImpulse(JPC_BodyInterface *in_iface, JPC_BodyID in_body_id, const float in_impulse[3]);
 
-JPC_API JPC_MotionType 
+JPC_API JPC_MotionType
 JPC_BodyInterface_GetMotionType(const JPC_BodyInterface *in_iface, JPC_BodyID in_body_id);
 
 JPC_API void
@@ -2074,6 +2237,17 @@ JPC_API void
 JPC_CharacterVirtual_Update(JPC_CharacterVirtual *in_character,
                             float in_delta_time,
                             const float in_gravity[3],
+                            const void *in_broad_phase_layer_filter,
+                            const void *in_object_layer_filter,
+                            const void *in_body_filter,
+                            const void *in_shape_filter,
+                            JPC_TempAllocator *in_temp_allocator);
+
+JPC_API void
+JPC_CharacterVirtual_ExtendedUpdate(JPC_CharacterVirtual *in_character,
+                            float in_delta_time,
+                            const float in_gravity[3],
+                            const void *in_settings,
                             const void *in_broad_phase_layer_filter,
                             const void *in_object_layer_filter,
                             const void *in_body_filter,

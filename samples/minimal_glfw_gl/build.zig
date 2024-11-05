@@ -12,18 +12,21 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .optimize = options.optimize,
     });
 
-    @import("system_sdk").addLibraryPathsTo(exe);
-
     const zglfw = b.dependency("zglfw", .{
         .target = options.target,
     });
     exe.root_module.addImport("zglfw", zglfw.module("root"));
     exe.linkLibrary(zglfw.artifact("glfw"));
 
-    const zopengl = b.dependency("zopengl", .{
-        .target = options.target,
-    });
+    const zopengl = b.dependency("zopengl", .{});
     exe.root_module.addImport("zopengl", zopengl.module("root"));
+
+    if (options.target.result.os.tag == .macos) {
+        if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+            exe.addLibraryPath(system_sdk.path("macos12/usr/lib"));
+            exe.addSystemFrameworkPath(system_sdk.path("macos12/System/Library/Frameworks"));
+        }
+    }
 
     return exe;
 }

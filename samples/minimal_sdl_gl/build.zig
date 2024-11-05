@@ -11,16 +11,18 @@ pub fn build(b: *std.Build, options: anytype) *std.Build.Step.Compile {
         .target = options.target,
         .optimize = options.optimize,
     });
+    exe.linkLibC();
 
-    const zsdl = b.dependency("zsdl", .{
-        .target = options.target,
-    });
+    const zsdl = b.dependency("zsdl", .{});
     exe.root_module.addImport("zsdl2", zsdl.module("zsdl2"));
 
-    @import("zsdl").addLibraryPathsTo(exe);
-    @import("zsdl").link_SDL2(exe);
+    @import("zsdl").prebuilt.addLibraryPathsTo(exe);
 
-    @import("zsdl").install_sdl2(&exe.step, options.target.result, .bin);
+    if (@import("zsdl").prebuilt.install_SDL2(b, options.target.result, .bin)) |install_sdl2_step| {
+        exe.step.dependOn(install_sdl2_step);
+    }
+
+    @import("zsdl").link_SDL2(exe);
 
     const zopengl = b.dependency("zopengl", .{});
     exe.root_module.addImport("zopengl", zopengl.module("root"));

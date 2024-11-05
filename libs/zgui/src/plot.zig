@@ -80,7 +80,7 @@ pub const Style = extern struct {
     plot_default_size: [2]f32,
     plot_min_size: [2]f32,
 
-    colors: [@typeInfo(StyleCol).Enum.fields.len][4]f32,
+    colors: [@typeInfo(StyleCol).@"enum".fields.len][4]f32,
     colormap: Colormap,
 
     use_local_time: bool,
@@ -313,11 +313,10 @@ pub const Flags = packed struct(u32) {
     no_inputs: bool = false,
     no_menus: bool = false,
     no_box_select: bool = false,
-    no_child: bool = false,
     no_frame: bool = false,
     equal: bool = false,
     crosshairs: bool = false,
-    _padding: u22 = 0,
+    _padding: u23 = 0,
 
     pub const canvas_only = Flags{
         .no_title = true,
